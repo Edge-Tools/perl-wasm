@@ -1,0 +1,62 @@
+# perl-cross hints for the wasm32-wasip1 target.
+#
+# Copied into the Perl source tree as cnf/hints/wasi before configure runs;
+# perl-cross auto-loads cnf/hints/<osname> (osname is set to "wasi" on the
+# configure command line).
+#
+# A perl-cross platform hint file supplies two kinds of value: facts its
+# compile/link probes cannot establish for this target, and the handful of
+# config symbols it neither probes nor defaults (left unset, those produce a
+# malformed `# HAS_FOO` line in config.h). cnf/hints/linux is the reference
+# for the latter set.
+
+# --- Type sizes -------------------------------------------------------------
+# perl-cross probes sizes by reading a compiled object's symbol table with
+# `readelf` — a method its own source notes "probably won't work on non-ELF
+# hosts". wasm objects are not ELF, so the probe fails. These are the fixed
+# wasm32 ABI (ILP32), verified by compiling sizeof() probes with the WASI SDK
+# clang and running them under a WASI host.
+charsize='1'
+shortsize='2'
+intsize='4'
+longsize='4'
+longlongsize='8'
+doublesize='8'
+longdblsize='16'
+ptrsize='4'
+sizesize='4'
+fpossize='16'
+lseeksize='8'
+uidsize='4'
+gidsize='4'
+timesize='8'
+
+# Byte order is probed the same non-portable way (objdump on a .data section
+# wasm objects do not have). wasm32 is little-endian with 4-byte longs.
+byteorder='1234'
+
+# --- Syscall / feature symbols perl-cross neither probes nor defaults -------
+# Left unset these break config.h generation. wasi-libc declares the clock
+# and nanosleep family; signal handlers are void.
+d_voidsig='define'
+d_nanosleep='define'
+d_clock_gettime='define'
+d_clock_getres='define'
+d_clock_nanosleep='define'
+d_clock='define'
+usemallocwrap='define'
+
+# WASI has no /proc and no advisory fcntl locking.
+d_procselfexe='undef'
+procselfexe='"undef"'
+d_fcntl_can_lock='undef'
+
+# struct stat st_ino: 64-bit unsigned in wasi-libc.
+st_ino_sign='1'
+st_ino_size='8'
+
+# Everything wasm32-wasi needs is in wasi-libc; no extra link libraries.
+libswanted='m'
+
+# No dynamic loader.
+usedl='undef'

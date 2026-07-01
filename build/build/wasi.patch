@@ -1,0 +1,113 @@
+--- a/unixish.h	2025-06-24 17:23:21
++++ b/unixish.h	2026-05-17 20:03:14
+@@ -170,6 +170,15 @@
+ #define USE_ENVIRON_ARRAY
+ #endif
+ 
++/* WASI (wasm32-wasi) has no user/group database: wasi-libc's <pwd.h>/<grp.h>
++ * declare the lookup functions but leave struct passwd/struct group
++ * incomplete, so the unconditional HAS_PASSWD/HAS_GROUP above make pp_sys.c
++ * fail to compile. Carve WASI out, as perl.h already does for Catamount. */
++#ifdef __wasi__
++#  undef HAS_GROUP
++#  undef HAS_PASSWD
++#endif
++
+ /*
+  * ex: set ts=8 sts=4 sw=4 et:
+  */
+--- a/ext/POSIX/POSIX.xs	2025-06-24 17:23:20
++++ b/ext/POSIX/POSIX.xs	2026-05-17 20:03:39
+@@ -1370,6 +1370,22 @@
+ #include <unistd.h>
+ #endif
+ #include <fcntl.h>
++
++/* WASI preview1 has no signal masks and no sigaction(); wasi-libc leaves
++ * struct sigaction incomplete and omits SIG_BLOCK/SIG_SETMASK. Stub the
++ * signal-set API to not_here(), exactly as the WIN32 branch below does, so
++ * POSIX builds (POSIX::sigaction etc. then croak cleanly at runtime). */
++#ifdef __wasi__
++#  define sigaction(a,b,c)  not_here("sigaction")
++#  define sigpending(a)     not_here("sigpending")
++#  define sigprocmask(a,b,c) not_here("sigprocmask")
++#  define sigsuspend(a)     not_here("sigsuspend")
++#  define sigemptyset(a)    not_here("sigemptyset")
++#  define sigaddset(a,b)    not_here("sigaddset")
++#  define sigdelset(a,b)    not_here("sigdelset")
++#  define sigfillset(a)     not_here("sigfillset")
++#  define sigismember(a,b)  not_here("sigismember")
++#endif
+ 
+ #ifdef HAS_TZNAME
+ #  if !defined(WIN32) && !defined(__CYGWIN__)
+@@ -1449,7 +1465,7 @@
+ #  ifdef HAS_UNAME
+ #    include <sys/utsname.h>
+ #  endif
+-#  ifndef __amigaos4__
++#  if !defined(__amigaos4__) && defined(I_SYSWAIT)
+ #    include <sys/wait.h>
+ #  endif
+ #  ifdef I_UTIME
+@@ -2809,7 +2825,7 @@
+ 	SV *			optaction
+ 	POSIX::SigAction	oldaction
+     CODE:
+-#if defined(WIN32) || (defined(__amigaos4__) && defined(__NEWLIB__))
++#if defined(WIN32) || (defined(__amigaos4__) && defined(__NEWLIB__)) || defined(__wasi__)
+ 	RETVAL = not_here("sigaction");
+ #else
+ # This code is really grody because we are trying to make the signal
+--- a/ext/Errno/Errno_pm.PL	2023-12-22 11:47:13
++++ b/ext/Errno/Errno_pm.PL	2026-05-17 20:32:34
+@@ -58,8 +58,9 @@
+             warn "Cannot open '$file'";
+             return;
+ 	}     
+-    } elsif ($Config{gccversion} ne '' && $^O ne 'darwin' ) {
+-	# With the -dM option, gcc outputs every #define it finds
++    } elsif (($Config{gccversion} ne '' && $^O ne 'darwin')
++	     || $Config{osname} eq 'wasi') {
++	# With the -dM option, gcc/clang outputs every #define it finds
+ 	unless(open(FH,"$Config{cc} -E -dM $Config{cppflags} $file |")) {
+             warn "Cannot open '$file'";
+             return;
+@@ -108,6 +109,16 @@
+ 
+ sub get_files {
+     my @file;
++    # WASI cross-build: this runs under the host miniperl ($^O='linux'), but
++    # the errno constants wanted are wasm32-wasi's. Skip the host-keyed header
++    # probing below and hand process_file an <errno.h> includer to preprocess
++    # with the cross compiler.
++    if ($Config{osname} eq 'wasi') {
++	open(my $fh, '>', 'errno.c') or die "Cannot open errno.c: $!";
++	print $fh "#include <errno.h>\n";
++	close $fh;
++	return ('errno.c');
++    }
+     # When cross-compiling we may store a path for gcc's "sysroot" option:
+     my $sysroot = $Config{sysroot} || '';
+     my $linux_errno_h;
+--- a/ext/re/re_top.h	2024-05-07 03:08:47
++++ b/ext/re/re_top.h	2026-05-17 20:43:00
+@@ -50,6 +50,18 @@
+ #define Perl_construct_ahocorasick_from_trie    my_construct_ahocorasick_from_trie
+ #define Perl_make_trie                          my_make_trie
+ 
++/* Perl 5.42 split regcomp.c into regcomp_invlist.c / regcomp_study.c / etc.;
++ * these newly cross-TU (non-static) helpers were not added to the override
++ * list above, so a static -Uusedl build (forced here: WASI has no dlopen)
++ * collides them between libperl.a and the re extension's regex-engine copy. */
++#define Perl_reg_add_data                       my_reg_add_data
++#define Perl_release_RExC_state                 my_release_RExC_state
++#define Perl_populate_anyof_bitmap_from_invlist my_populate_anyof_bitmap_from_invlist
++#define Perl_set_ANYOF_arg                      my_set_ANYOF_arg
++#define Perl_add_above_Latin1_folds             my_add_above_Latin1_folds
++#define Perl_get_ANYOFM_contents                my_get_ANYOFM_contents
++#define Perl_get_ANYOFHbbm_contents             my_get_ANYOFHbbm_contents
++
+ #define PERL_NO_GET_CONTEXT
+ 
+ /*
